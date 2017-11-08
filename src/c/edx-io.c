@@ -1,10 +1,10 @@
+#include "edx-io.h"
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "edx-io.h"
 
 #define INPUT_FILE_NAME "input.txt"
 #define OUTPUT_FILE_NAME "output.txt"
@@ -97,7 +97,8 @@
             if (input_file_descriptor != -1) {
                 struct stat fstat_buffer;
                 if (fstat(input_file_descriptor, &fstat_buffer) != -1) {
-                    int mmap_size = fstat_buffer.st_size;
+                    // st_size is off_t actually. off_t is signed, however, it's a file size.
+                    size_t mmap_size = (size_t) fstat_buffer.st_size;
                     mmap_buf = (char*) (mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_PRIVATE,
                             input_file_descriptor, 0));
                     if (mmap_buf != MAP_FAILED) {
@@ -114,7 +115,7 @@
         }
 
         void edx_close_input() {
-            munmap(mmap_buf, mmap_end - mmap_buf);
+            munmap(mmap_buf, (size_t) (mmap_end - mmap_buf));
             close(input_file_descriptor);
         }
     #endif
@@ -125,22 +126,21 @@
         }
     }
 
-    char *copy_string_contents(char const *source, int length) {
+    char *copy_string_contents(char const *source, size_t length) {
         char *rv = (char*) (malloc(sizeof(char) * (length + 1)));
         memcpy(rv, source, sizeof(char) * length);
         rv[length] = 0;
         return rv;
     }
 
-    char *edx_unsafe_read_token(int *length, int *ends_with_zero, int *must_be_freed) {
+    char *edx_unsafe_read_token(size_t *length, int *ends_with_zero, int *must_be_freed) {
         char *rv;
-        int size;
         skip_whitespace();
         rv = mmap_ptr;
         while (mmap_ptr < mmap_end && *mmap_ptr > ' ') {
             ++mmap_ptr;
         }
-        if (length) *length = mmap_ptr - rv;
+        if (length) *length = (size_t) (mmap_ptr - rv);
         if (must_be_freed) *must_be_freed = 0;
         if (!CAN_WRITE_TO_PAGES || mmap_ptr == mmap_end) {
             if (ends_with_zero) *ends_with_zero = 0;
@@ -151,7 +151,7 @@
         return rv;
     }
 
-    char *consume_token(int *copy_was_made, int *length) {
+    char *consume_token(int *copy_was_made, size_t *length) {
         int ends_with_zero;
         char *rv = edx_unsafe_read_token(length, &ends_with_zero, NULL);
         if (ends_with_zero) {
@@ -180,7 +180,7 @@
         return is_negative ? add <= 8 : add < 8;
     }
 
-    int i64_impl_safe(int value, int add, int is_negative) {
+    int i64_impl_safe(long long value, int add, int is_negative) {
         if (value < 922337203685477580LL) {
             return 1;
         }
@@ -198,8 +198,8 @@
             is_negative = 1;
             ++mmap_ptr;
         }
-        while (mmap_ptr < mmap_end) {
-            symbol = *mmap_ptr;
+        while (mmap_ptr <= mmap_end) {
+            symbol = mmap_ptr < mmap_end ? *mmap_ptr : '\0';
             if ('0' <= symbol && symbol <= '9') {
                 ++count_digits;
                 ++mmap_ptr;
@@ -231,8 +231,8 @@
             is_negative = 1;
             ++mmap_ptr;
         }
-        while (mmap_ptr < mmap_end) {
-            symbol = *mmap_ptr;
+        while (mmap_ptr <= mmap_end) {
+            symbol = mmap_ptr < mmap_end ? *mmap_ptr : '\0';
             if ('0' <= symbol && symbol <= '9') {
                 ++count_digits;
                 ++mmap_ptr;
@@ -281,7 +281,7 @@
 
     char *edx_next_unbounded() {
         int copy_was_made;
-        int length;
+        size_t length;
         char *token = consume_token(&copy_was_made, &length);
         if (copy_was_made) {
             return token;
@@ -388,7 +388,7 @@
         }
     }
 
-    char *edx_unsafe_read_token(int *length, int *ends_with_zero, int *must_be_freed) {
+    char *edx_unsafe_read_token(size_t *length, int *ends_with_zero, int *must_be_freed) {
         char *rv = edx_next_unbounded();
         if (length)         *length = strlen(rv);
         if (ends_with_zero) *ends_with_zero = 1;
@@ -461,7 +461,7 @@ void edx_print_i32(int value) {
 #ifdef PRIMITIVES_THROUGH_PRINTF
     fprintf(ouf, "%d", value);
 #else
-    if (value == -2147483648) {
+    if (value && value == -value) {
         edx_print("-2147483648");
     } else {
         if (value < 0) {
@@ -496,7 +496,7 @@ void edx_print_i64(long long value) {
 #ifdef PRIMITIVES_THROUGH_PRINTF
     fprintf(ouf, "%lld", value);
 #else
-    if (value == 1LL << 63) {
+    if (value && value == -value) {
         edx_print("-9223372036854775808");
     } else {
         if (value < 0) {
